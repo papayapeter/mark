@@ -1,4 +1,4 @@
-from transformers import pipeline
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 import torch
 
 
@@ -30,12 +30,17 @@ class Chatbot2:
         self._answer_signifier = answer_signifier
         self._seperator = separator
 
+        # device to be used (cuda gpu or cpu)
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         # model & tokenizer objects
-        self._model = model
+        self._model = GPT2LMHeadModel.from_pretrained(model)
         if tokenizer is None:
-            self._tokenizer = model
+            self._tokenizer = GPT2Tokenizer.from_pretrained(model)
         else:
-            self._tokenizer = tokenizer
+            self._tokenizer = GPT2Tokenizer.from_pretrained(tokenizer)
+
+        self._model.to(self._device)
 
         # correct the answer signifier (remove blank spaces)
         while len(self._answer_signifier) > 0 and self._answer_signifier[-1] == " ":
@@ -49,6 +54,19 @@ class Chatbot2:
         max_tokens: maximum length of the response in tokens
         stop: sequence where the api will stop generating further tokens
         """
+
+        # parameters for generation
+        parameters = {
+            "length": max_tokens,
+            "temperature": 0.7,  # default: 1.0
+            "top_k": 0,  # default: 0
+            "top_p": 0.9,  # default: 0.9
+            "repetition_penalty": 1.0,  # default: 1.0 (primarily useful for CTRL model)
+            "num_return_sequences": 1,  # default: 1
+            "stop_token": stop,  # character or None
+            "seed": 0,
+        }
+
         # generate prompt from dataset & question
         prompt = (
             self._dataset
@@ -59,18 +77,59 @@ class Chatbot2:
             + self._answer_signifier
         )
 
-        bot = pipeline(
-            "text-generation",
-            model=self._model,
-            tokenizer=self._tokenizer,
-            config={"max_length": max_tokens},
+        # encode prompt to tokens
+        encoded_prompt = self._tokenizer.encode(prompt, return_tensors="pt")
+        encoded_prompt = encoded_prompt.to(self._device)
+
+        # if the encoded prompt is empty
+        # set the model input to None
+        if encoded_prompt.size()[-1] == 0:
+            input_tokens = None
+        else:
+            input_tokens = encoded_prompt
+
+        # generate output sequence with parameters
+        output_sequences = self._model.generate(
+            input_ids=input_tokens,
+            max_length=parameters["length"] + len(encoded_prompt[0]),
+            temperature=parameters["temperature"],
+            top_k=parameters["top_k"],
+            top_p=parameters["top_p"],
+            repetition_penalty=parameters["repetition_penalty"],
+            do_sample=True,
+            num_return_sequences=parameters["num_return_sequences"],
         )
 
-        answer = (
-            bot(prompt)[0]["generated_text"]
-            # bot(prompt)[0]["generated_text"].replace(f"{prompt} ", "").split("Q: ")[0]
-        )
+        # decode sequence(s) from tokens to text
+        generated_sequences = []
 
-        print(answer)
+        for generated_sequence_id, generated_sequence in enumerate(output_sequences):
+            generated_sequence = generated_sequence.tolist()
 
-        return answer
+            # decode text
+            text = self._tokenizer.decode(
+                generated_sequence, clean_up_tokenization_spaces=True
+            )
+
+            # remove all text after the stop token
+            text = text[
+                : text.find(parameters["stop_token"])
+                if not parameters["stop_token"] is None
+                else None
+            ]
+
+            # add the prompt at the beginning of the sequence. Remove the excess text that was used for pre-processing
+            total_sequence = (
+                prompt
+                + text[
+                    len(
+                        self._tokenizer.decode(
+                            encoded_prompt[0], clean_up_tokenization_spaces=True
+                        )
+                    ) :
+                ]
+            )
+
+            generated_sequences.append(total_sequence)
+
+        return generated_sequences[0].replace(prompt + " ", "").split("\n\n")[0]

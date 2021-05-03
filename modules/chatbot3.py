@@ -36,7 +36,7 @@ class Chatbot3:
         while len(self._answer_signifier) > 0 and self._answer_signifier[-1] == " ":
             self._answer_signifier = self._answer_signifier[:-1]
 
-    def ask(self, question, max_tokens=100, stop=None):
+    def ask(self, question, max_tokens=64, stop=None):
         """
         generates an answer from a question
 
@@ -57,7 +57,11 @@ class Chatbot3:
         # return the response from the openai api
         return (
             openai.Completion.create(
-                engine="davinci", prompt=prompt, max_tokens=max_tokens, stop=stop
+                engine="davinci",
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=0.7,
+                stop=stop,
             )
             .choices[0]
             .text.strip()
