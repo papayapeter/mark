@@ -2,6 +2,7 @@
 Chatbot Mark based on GPT-3
 """
 import os
+from colorama import init, Fore
 from dotenv import load_dotenv
 from colorama import init, Fore
 
